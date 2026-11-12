@@ -1,0 +1,5 @@
+# A股情报调查员：intel_investigate 工具（调查计划/报告存证/档案）+ intel-investigator 技能 + 侧栏档案看板。
+# 浏览器半边由 dsh.client 声明加载。
+- insert:
+    - id: intel-investigator
+      name: 'dsh-intel-investigator'
