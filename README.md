@@ -4,6 +4,8 @@
 
 dsh 插件（技能 + 工具 + 档案看板完整形态）。核心聚焦 A 股市场（基本面、行业产业链、概念热点、资金流向、公告研报、股吧舆情），同时覆盖竞品/舆情/人物/信息验证四类通用调查。移植自 [redfox-community](https://github.com/redfox-data/redfox-community) 的 skills/ai-intelligence-investigator。
 
+<img width="1316" height="1248" alt="image" src="https://github.com/user-attachments/assets/12a63a56-62c2-4746-9de6-d449a553a6d1" />
+
 ## 与数据型插件的区别
 
 调查执行由 **agent 对话完成**（三轮搜索方法论：广域扫描 → 深度挖掘 → 交叉验证），插件负责**调查计划生成**与**报告存证归档**——本插件不抓行情数据，调查发现的真实性由可信度标注纪律约束。
