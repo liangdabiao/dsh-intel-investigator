@@ -25,7 +25,11 @@ const srv = http.createServer((req, res) => {
     const reply = (obj) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)) }
     // 鉴权必须在 X-API-KEY 头（3106 = key 放 body 的错误形态）
     if (req.headers['x-api-key'] !== 'ak_smoke') return reply({ code: 3106, msg: 'key 必须在 X-API-KEY 头' })
-    savedBodies.push(JSON.parse(body || '{}'))
+    const parsed = JSON.parse(body || '{}')
+    // 与真实接口一致：body.content 限 2000 字符（超长返回 1003）
+    const len = String(parsed.content ?? '').length
+    if (len > 2000) return reply({ code: 1003, msg: `body.content 参数长度超过限制（${len}字符），最大允许2000字符` })
+    savedBodies.push(parsed)
     reply({ code: 2000, data: 1, msg: '成功' })
   })
 })
@@ -56,6 +60,26 @@ const REPORT = [
   '- **结论B** - 有传闻称扩产不及预期，❌ 已否定（巨潮公告反驳）',
   '- **结论C** - 新电池技术进展 ⚠️ 待确认',
   '',
+].join('\n')
+
+// 超长报告 fixture：真实接口限 2000 字符，必须走结构化摘要才能上传
+const LONG_REPORT = [
+  '# 📋 舆情事件调查报告：超长测试',
+  '',
+  '## 1. 事件概况',
+  '',
+  '背景描述。'.repeat(420),
+  '',
+  '## 2. 关键结论',
+  '',
+  '1. **结论甲** - 事实层面成立 ✅ 已确认',
+  '2. **结论乙** - 仍有争议 ⚠️ 待确认',
+  '',
+  '## 3. 风险评估',
+  '',
+  '| 风险项 | 影响级别 |',
+  '|:---|:---|',
+  '| 政策风险 | 🔴 高 |',
 ].join('\n')
 
 // ── 工具直调 ──
@@ -95,6 +119,20 @@ let rid
 {
   const r = await call({ action: 'list' })
   check('list 档案行', r.ok && r.data.includes('宁德时代') && r.data.includes('已存证'), r.data.split('\n')[0] || '')
+}
+{
+  // 超长报告：原样上传必被服务端拒（1003），必须自动摘要
+  check('fixture 超过平台上限', LONG_REPORT.length > 2000, `len=${LONG_REPORT.length}`)
+  const before = savedBodies.length
+  const r = await call({ action: 'save', mode: 'event', subject: '超长报告测试', reportMd: LONG_REPORT, tags: '测试' })
+  const sent = savedBodies[before]
+  check('超长报告按摘要存证成功', r.ok && r.summary.includes('已存证 RedFox 平台') && r.summary.includes('结构化摘要'), r.summary.slice(0, 110))
+  check('上传内容不超 2000 字符', Boolean(sent) && String(sent.content).length <= 2000, `len=${sent?.content?.length}`)
+  check('摘要保留关键结论', Boolean(sent) && sent.content.includes('结论甲') && sent.content.includes('限 2000 字符'), '')
+  const full = await call({ action: 'get' })
+  check('本地仍保留全文', full.ok && full.data.includes('结论乙') && full.data.includes('事件概况'), '')
+  check('list 标注摘要版', (await call({ action: 'list' })).data.includes('已存证·摘要'), '')
+  check('页脚标注摘要版', (r.footer || '').includes('摘要版'), (r.footer || '').slice(0, 90))
 }
 {
   const bad = await call({ action: 'save', mode: 'stock', subject: 'X', reportMd: '太短' })
@@ -147,6 +185,23 @@ const req = async (method, path, body) => {
   check('未知 mode 400', badMode.status === 400, '')
   const del = await req('DELETE', `/api/reports/${created.json.report.report_id}`)
   check('面板删档案', del.status === 200 && del.json.ok, '')
+}
+{
+  // 面板直存超长报告（自动上传开启）：应自动转摘要
+  const direct = await req('POST', '/api/reports', { mode: 'event', subject: '面板超长直存', report_md: LONG_REPORT })
+  check('面板直存超长报告（摘要存证）', direct.status === 200 && direct.json.report.uploaded === true && Boolean(direct.json.report.upload_note), `note=${direct.json?.report?.upload_note}`)
+  // 关闭自动上传后只存本地，再用「重新上传」补传（必须同样走摘要）
+  await req('POST', '/api/settings', { auto_upload: false })
+  const local = await req('POST', '/api/reports', { mode: 'event', subject: '重传摘要测试', report_md: LONG_REPORT })
+  const localId = local.json.report.report_id
+  check('关闭自动上传时仅存本地', local.status === 200 && local.json.report.uploaded === false && !local.json.report.upload_note, '')
+  const up = await req('POST', `/api/reports/${encodeURIComponent(localId)}/upload`)
+  check('重传超长报告成功（摘要）', up.status === 200 && up.json.ok === true && up.json.summarized === true, up.json?.note || '')
+  const reread = await req('GET', `/api/reports/${encodeURIComponent(localId)}`)
+  check('重传后状态回写', reread.json.report.uploaded === true && Boolean(reread.json.report.upload_note), '')
+  await req('DELETE', `/api/reports/${encodeURIComponent(localId)}`)
+  await req('DELETE', `/api/reports/${encodeURIComponent(direct.json.report.report_id)}`)
+  await req('POST', '/api/settings', { auto_upload: true })
 }
 {
   const st = await req('GET', '/api/settings')

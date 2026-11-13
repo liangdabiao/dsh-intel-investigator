@@ -51,6 +51,7 @@
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.mjs",
     "smoke": "node scripts/smoke.mjs",
+    "reupload": "node scripts/reupload.mjs",
     "dev": "node scripts/devserver.mjs",
     "prepare": "npm run build",
     "prepack": "npm run build"

@@ -7,6 +7,7 @@ import { createSkillProvider } from '../lib/skills.js'
 import { systemSection } from './systemPrompt.js'
 import { registerApi } from '../lib/api.js'
 import { saveRecord, resolveApiKey, resolveApiBase } from '../lib/redfox.js'
+import { platformContent } from '../lib/platformContent.js'
 import { MODE_KEYS, MODES, resolveMode, buildPlan } from '../lib/modes.js'
 import { tallyCredibility, checkReportStructure } from '../lib/credibility.js'
 import {
@@ -67,7 +68,9 @@ function buildFooter(meta) {
   if (cred.total_marks) {
     parts.push(`✅${cred.confirmed ?? 0} ⚠️${cred.pending ?? 0} ❌${cred.refuted ?? 0} 🔍${cred.single ?? 0}`)
   }
-  const upload = meta.uploaded ? '已存证 RedFox 平台' : meta.upload_error ? `本地档案（平台存证失败：${String(meta.upload_error).slice(0, 40)}）` : '本地档案'
+  const upload = meta.uploaded
+    ? (meta.upload_note ? '已存证 RedFox 平台（摘要版，全文仅本地）' : '已存证 RedFox 平台')
+    : meta.upload_error ? `本地档案（平台存证失败：${String(meta.upload_error).slice(0, 40)}）` : '本地档案'
   return `🔍 A股情报调查员 · ${meta.mode_label} · 调查目标 ${meta.subject}${parts.length ? ' · 可信度 ' + parts.join('/') : ''} · ${upload} · 记录 ${meta.report_id}`
 }
 
@@ -130,24 +133,30 @@ export const intelInvestigateTool = {
       const opts = { apiKey: resolveApiKey({ settings, config: cfg }), apiBase: resolveApiBase({ settings }), proxyUrl: cfg?.proxyUrl || settings.proxy_url || '' }
       let uploaded = false
       let uploadError = ''
+      let uploadNote = ''
       if (opts.apiKey) {
         try {
-          await saveRecord({ title, content: reportMd, tags: [MODES[mode].label, subject, ...tags], ...opts })
+          const payload = platformContent(reportMd, {
+            title, subject, modeLabel: MODES[mode].label, credibility: tallyCredibility(reportMd),
+          })
+          await saveRecord({ title, content: payload.content, tags: [MODES[mode].label, subject, ...tags], ...opts })
           uploaded = true
+          uploadNote = payload.note
         } catch (e) {
           uploadError = String(e?.message || e)
         }
       } else {
         uploadError = '未配置 RedFox API Key，仅存本地'
       }
-      const meta = saveReport({ mode, modeLabel: MODES[mode].label, subject, title, reportMd, tags, uploaded, uploadError })
+      const meta = saveReport({ mode, modeLabel: MODES[mode].label, subject, title, reportMd, tags, uploaded, uploadError, uploadNote })
 
       const cred = meta.credibility
       const summary =
-        `报告已存档（reportId=${meta.report_id}）${uploaded ? '，并已存证 RedFox 平台' : uploadError ? `。平台存证未完成：${uploadError}（可稍后用面板「重新上传」）` : ''}。` +
+        `报告已存档（reportId=${meta.report_id}）${uploaded ? (uploadNote ? '，并已存证 RedFox 平台（超长报告按结构化摘要上传，全文保留在本地档案）' : '，并已存证 RedFox 平台') : uploadError ? `。平台存证未完成：${uploadError}（可稍后用面板「重新上传」）` : ''}。` +
         `可信度标注统计：✅${cred.confirmed} ⚠️${cred.pending} ❌${cred.refuted} 🔍${cred.single}。` +
         (structure.ok ? '' : ` 结构提示：${structure.problems.join('；')}。`) +
-        ` 把报告全文完整输出给用户（含可信度标注），末尾逐字附页脚。${uploaded ? '' : '如实转述存证状态，不要声称已上传平台。'}`
+        ` 把报告全文完整输出给用户（含可信度标注），末尾逐字附页脚。${uploaded ? '' : '如实转述存证状态，不要声称已上传平台。'}` +
+        ` 桌面端 WebContentsView 会 deny window.open/target=_blank，报告只能在面板内查看——告诉用户点侧栏「A股情报调查员」的档案详情（reportId=${meta.report_id}），不要把磁盘路径当成可点开的入口。`
 
       return result(true, summary, reportMd.slice(0, MAX_TEXT), buildFooter(meta))
     }
@@ -168,7 +177,7 @@ export const intelInvestigateTool = {
       if (!list.length) return result(false, '还没有调查档案。先完成调查再 save。')
       const lines = list.map((r) => {
         const c = r.credibility || {}
-        return `${r.report_id}｜${r.mode_label}｜${r.subject}｜✅${c.confirmed ?? 0} ⚠️${c.pending ?? 0} ❌${c.refuted ?? 0} 🔍${c.single ?? 0}${r.uploaded ? '｜已存证' : r.upload_error ? '｜仅本地' : ''}`
+        return `${r.report_id}｜${r.mode_label}｜${r.subject}｜✅${c.confirmed ?? 0} ⚠️${c.pending ?? 0} ❌${c.refuted ?? 0} 🔍${c.single ?? 0}${r.uploaded ? (r.upload_note ? '｜已存证·摘要' : '｜已存证') : r.upload_error ? '｜仅本地' : ''}`
       })
       return result(true, `共 ${list.length} 份调查档案（新→旧）。读全文用 action="get"。`, lines.join('\n').slice(0, MAX_TEXT))
     }

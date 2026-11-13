@@ -64,6 +64,18 @@ test('updateUploadState', () => {
   assert.equal(getMeta(meta.report_id).upload_error, 'x')
 })
 
+test('upload_note：摘要版状态可存取', () => {
+  const meta = saveReport({
+    mode: 'event', modeLabel: '舆情事件调查', subject: '摘要测试', title: '舆情事件调查：摘要测试',
+    reportMd: mdFixture, uploaded: true, uploadNote: '平台存证为结构化摘要（全文 7648 字符，仅本地保留）',
+  })
+  assert.ok(getMeta(meta.report_id).upload_note.includes('结构化摘要'))
+  assert.ok(publicMeta(getMeta(meta.report_id)).upload_note.includes('结构化摘要'))
+  updateUploadState(meta.report_id, { uploaded: true, uploadNote: '' })
+  assert.equal(getMeta(meta.report_id).upload_note, '')
+  deleteReport(meta.report_id)
+})
+
 test('deleteReport', () => {
   const meta = listReports({ mode: 'verify' })[0]
   assert.ok(existsSync(join(tmp, 'intel-investigator', 'reports', meta.report_id)))

@@ -8,6 +8,16 @@
 
   const state = { catalog: null, mode: '' }
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  // 档案里的 saved_at 是 UTC ISO 串，展示时换成浏览器本地时区（否则东八区会差 8 小时）
+  const fmtTime = (iso) => {
+    const d = new Date(iso)
+    if (!iso || Number.isNaN(d.getTime())) return String(iso ?? '').slice(0, 16).replace('T', ' ')
+    const p = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+  }
+  const uploadChip = (r) => (r.uploaded
+    ? `<span class="chip done">${r.upload_note ? '已存证·摘要' : '已存证'}</span>`
+    : r.upload_error ? '<span class="chip bad">仅本地</span>' : '<span class="chip">本地</span>')
 
   async function api(path) {
     const res = await fetch(`/intel-investigator${path}`)
@@ -32,6 +42,32 @@
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
     return body
+  }
+
+  // 打开外部链接：桌面端 iframe 里 window.open 会被 WebContentsView deny，
+  // 先请宿主用系统默认浏览器打开；宿主不支持（网页版/无桌面）时退回新窗口。
+  async function openLink(u) {
+    if (!u || u === '#' || u === 'about:blank') return
+    try {
+      const r = await apiPost('/api/open', { url: u })
+      if (r?.ok) { toast('已在系统浏览器打开'); return }
+      throw new Error(r?.error || '打开失败')
+    } catch (e) {
+      const win = window.open(u, '_blank', 'noopener')
+      if (!win) {
+        const hint = /404|not found/i.test(String(e.message))
+          ? '宿主还没重启（/api/open 未上线），重启 dsh 后就能用系统浏览器打开'
+          : e.message
+        toast(`链接打不开：${hint}`, true)
+      }
+    }
+  }
+
+  // 面板里的外链一律交给系统浏览器（桌面端 <a target="_blank"> 同样会被 deny）
+  function bindExternalLinks() {
+    document.querySelectorAll('a[target="_blank"]').forEach((a) => {
+      a.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openLink(a.getAttribute('href')) }
+    })
   }
 
   let toastTimer = null
@@ -167,11 +203,11 @@
           <a class="card" href="#/r/${encodeURIComponent(r.report_id)}">
             <div class="c-top">
               <div class="c-title">${esc(r.title)}</div>
-              ${r.uploaded ? '<span class="chip done">已存证</span>' : r.upload_error ? '<span class="chip bad">仅本地</span>' : '<span class="chip">本地</span>'}
+              ${uploadChip(r)}
             </div>
             <div class="c-sub">${esc(r.mode_label)} · ${r.bytes >= 1024 ? (r.bytes / 1024).toFixed(1) + ' KB' : r.bytes + ' B'}</div>
             <div class="c-sub" style="margin-top:6px"><span class="cred-chips">${credChips(r.credibility)}</span></div>
-            <div class="c-foot"><span>${esc(String(r.saved_at).slice(0, 16).replace('T', ' '))}</span>${(r.tags || []).length ? `<span style="margin-left:auto">${esc(r.tags.join(' / '))}</span>` : ''}</div>
+            <div class="c-foot"><span>${esc(fmtTime(r.saved_at))}</span>${(r.tags || []).length ? `<span style="margin-left:auto">${esc(r.tags.join(' / '))}</span>` : ''}</div>
           </a>`).join('')}</div>`
         : `<div class="empty"><div class="e-title">${cur ? '该模式下还没有档案' : '还没有调查档案'}</div><p>填调查目标点「去对话调查」——agent 三轮调查写完报告会自动归档到这里。</p></div>`}
       </section>`
@@ -193,7 +229,7 @@
       <div class="detail-head">
         <div>
           <h1>${esc(meta.title)}</h1>
-          <div class="c-sub" style="margin-top:4px">${esc(meta.mode_label)} · 调查目标 ${esc(meta.subject)} · 归档于 ${esc(String(meta.saved_at).slice(0, 16).replace('T', ' '))}${meta.uploaded ? ' · 已存证 RedFox 平台' : meta.upload_error ? ` · <span style="color:var(--warn)">存证未完成：${esc(meta.upload_error)}</span>` : ' · 本地档案'}</div>
+          <div class="c-sub" style="margin-top:4px">${esc(meta.mode_label)} · 调查目标 ${esc(meta.subject)} · 归档于 ${esc(fmtTime(meta.saved_at))}${meta.uploaded ? ` · 已存证 RedFox 平台${meta.upload_note ? '（摘要版，全文仅本地）' : ''}` : meta.upload_error ? ` · <span style="color:var(--warn)">存证未完成：${esc(meta.upload_error)}</span>` : ' · 本地档案'}</div>
         </div>
         <div class="actions">
           ${meta.uploaded ? '' : `<button class="btn accent" id="re-upload">${ic('upload')}重新上传</button>`}
@@ -239,8 +275,8 @@
     if (up) up.onclick = async () => {
       up.disabled = true
       try {
-        await apiPost(`/api/reports/${encodeURIComponent(id)}/upload`)
-        toast('已存证 RedFox 平台')
+        const r = await apiPost(`/api/reports/${encodeURIComponent(id)}/upload`)
+        toast(r?.summarized ? '已存证 RedFox 平台（超长报告按摘要上传，全文留本地）' : '已存证 RedFox 平台')
         location.reload()
       } catch (e) { toast(e.message, true); up.disabled = false }
     }
@@ -376,6 +412,7 @@
 
   // ---------- 渲染辅助 ----------
   function bindCommon() {
+    bindExternalLinks()
     const go = document.getElementById('f-go')
     if (go) go.onclick = () => {
       const mode = document.getElementById('f-mode')?.value || 'stock'
@@ -432,6 +469,12 @@
     }
     render().catch(() => {})
   }
+  // 报告 iframe 里的链接点击会 postMessage 过来，统一交给 openLink 走系统浏览器
+  addEventListener('message', (e) => {
+    if (e.origin !== location.origin) return
+    const m = e.data
+    if (m && m.type === 'dsh:open-link' && typeof m.url === 'string') openLink(m.url)
+  })
   addEventListener('hashchange', () => render())
   boot()
   setTimeout(() => { if (!state.catalog?.version || state.catalog.version === '-') boot() }, 2500)
