@@ -24,7 +24,7 @@ dsh 插件（技能 + 工具 + 档案看板完整形态）。核心聚焦 A 股�
 ## 安装
 
 ```bash
-dsh plugin --profile web add file:D:/dsh-research/dsh-intel-investigator
+dsh plugin --profile web add https://github.com/liangdabiao/dsh-intel-investigator
 ```
 
 前置：dsh >= 0.2.1-rc.2。RedFox API Key（[红狐 hub 获取](https://redfox.hk/settings/api-keys?source=github)，`ak_` 开头）用于报告存证到平台；不配置时只存本地档案。
